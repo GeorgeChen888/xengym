@@ -1,0 +1,1 @@
+根据数据采集代码@data_collection2.py 写一个数据可视化浏览，可选择浏览对象中，图像包括real_rectify，diff_real，depth_real等，节点坐标数据包括marker_real等。可以选择sensor_0和sensor_1对比可视化，可以选择不同trj,按空格进入下一frame
