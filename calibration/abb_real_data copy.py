@@ -4,19 +4,19 @@
 用于为calibration.py采集真实的触觉传感器数据
 兼容calibration.py的数据格式要求
 
-数据格式（支持多次采集）：
+数据格式：
 {
     "物体名": {
-        "traj_0_run0": {  # 支持多次运行：traj_name_runX
+        "traj_0": {
             "step_000": {
                 "marker_displacement": np.array,  # (20, 11, 2) marker位移
                 "force_xyz": np.array,            # (3,) 三维力
-                "metadata": dict,                 # 轨迹/步信息（含run_id）
+                "sensor_pose": dict,              # TCP位姿
+                "metadata": dict,                 # 轨迹/步信息
                 "depth_field": None
             },
             ...
         },
-        "traj_0_run1": {...},  # 同一轨迹的第二次采集
         ...
     }
 }
@@ -87,7 +87,7 @@ class TactileSensor():
 
 class ABBDataCollector():
     """ABB机器人数据采集器"""
-    def __init__(self, pose0, object_name="cube", config_file=None, storage_file=None, repeat_count=1):
+    def __init__(self, pose0, object_name="cube", config_file=None, storage_file=None):
         """
         初始化数据采集器
 
@@ -95,11 +95,8 @@ class ABBDataCollector():
             pose0: 初始位置 [x, y, z, qw, qx, qy, qz]
             object_name: 物体名称
             config_file: 配置文件路径
-            storage_file: 数据存储文件路径
-            repeat_count: 每条轨迹重复采集次数
         """
         self.object_name = object_name
-        self.repeat_count = max(1, repeat_count)  # 至少执行1次
 
         # 加载配置
         if config_file and Path(config_file).exists():
@@ -348,8 +345,8 @@ class ABBDataCollector():
         self.robot.set_velocity(self.config['press_speed'], self.config['press_speed'])
 
     def collect_calibration_data(self) -> Dict[str, Dict[str, Dict]]:
-        """按轨迹采集真实触觉数据（支持多次重复采集）"""
-        logger.info(f"开始采集 {self.object_name} 的轨迹数据（重复 {self.repeat_count} 次）...")
+        """按轨迹采集真实触觉数据"""
+        logger.info(f"开始采集 {self.object_name} 的轨迹数据...")
 
         trajectories = self.trajectory_config.get(self.object_name, {})
         if not trajectories:
@@ -359,58 +356,24 @@ class ABBDataCollector():
 
         object_data: Dict[str, Dict[str, Dict]] = {}
 
-        # 多次重复采集
-        for run_idx in range(self.repeat_count):
-            logger.info(f"===== 开始第 {run_idx + 1}/{self.repeat_count} 轮采集 =====")
-            
-            for traj_name, steps in trajectories.items():
-                try:
-                    # 获取已存在的运行编号，自动递增
-                    next_run_id = self._get_next_run_id(traj_name)
-                    traj_key_with_run = f"{traj_name}_run{next_run_id}"
-                    
-                    logger.info(f"执行 {traj_key_with_run}")
-                    traj_data = self._execute_trajectory(traj_name, steps, run_id=next_run_id)
-                    if traj_data:
-                        object_data[traj_key_with_run] = traj_data
-                        logger.info(f"✓ {traj_key_with_run} 采集完成")
-                except Exception as exc:
-                    logger.error(f"轨迹 {traj_name} (run{run_idx}) 执行失败: {exc}")
-                    import traceback
-                    traceback.print_exc()
-            
-            if run_idx < self.repeat_count - 1:
-                logger.info(f"第 {run_idx + 1} 轮完成，准备下一轮...")
-                time.sleep(1)
-        
+        for traj_name, steps in trajectories.items():
+            try:
+                traj_data = self._execute_trajectory(traj_name, steps)
+                if traj_data:
+                    object_data[traj_name] = traj_data
+            except Exception as exc:
+                logger.error(f"轨迹 {traj_name} 执行失败: {exc}")
         self.move_to_safe_height()
         self.calibration_data[self.object_name] = object_data
-        logger.info(f"物体 {self.object_name} 采集完成，共 {len(object_data)} 条记录")
+        logger.info(f"物体 {self.object_name} 采集完成，共 {len(object_data)} 条轨迹")
         return {self.object_name: object_data}
 
-    def _get_next_run_id(self, traj_name: str) -> int:
-        """获取下一个可用的运行编号"""
-        storage = self._load_storage()
-        obj_data = storage.get(self.object_name, {})
-        
-        existing_run_ids = []
-        for key in obj_data.keys():
-            # 解析 traj_name_runX 格式
-            if key.startswith(f"{traj_name}_run"):
-                try:
-                    run_id = int(key.split("_run")[-1])
-                    existing_run_ids.append(run_id)
-                except ValueError:
-                    pass
-        
-        return max(existing_run_ids, default=-1) + 1
-
-    def _execute_trajectory(self, trajectory_name: str, steps: List[Dict[str, float]], run_id: int = 0) -> Dict[str, Dict]:
+    def _execute_trajectory(self, trajectory_name: str, steps: List[Dict[str, float]]) -> Dict[str, Dict]:
         """执行单条轨迹并采集每一步的数据"""
         if not steps:
             return {}
 
-        logger.info(f"执行轨迹 {trajectory_name} (run{run_id})，共 {len(steps)} 步")
+        logger.info(f"执行轨迹 {trajectory_name}，共 {len(steps)} 步")
 
         self.move_to_safe_height()
         time.sleep(self.step_settle_time)
@@ -428,10 +391,8 @@ class ABBDataCollector():
 
             metadata = {
                 'trajectory': trajectory_name,
-                'run_id': run_id,
                 'step_index': idx,
-                'commanded_delta_mm': (dx, dy, dz),
-                'timestamp': datetime.now().isoformat()
+                'commanded_delta_mm': (dx, dy, dz)
             }
 
             step_data = self._collect_current_step_data(metadata=metadata)
@@ -439,9 +400,10 @@ class ABBDataCollector():
                 step_key = f"step_{idx:03d}"
                 trajectory_data[step_key] = step_data
 
+        # self.move_to_safe_height()
         time.sleep(self.step_settle_time)
 
-        logger.info(f"轨迹 {trajectory_name} (run{run_id}) 完成，采集 {len(trajectory_data)} 条数据")
+        logger.info(f"轨迹 {trajectory_name} 完成，采集 {len(trajectory_data)} 条数据")
         return trajectory_data
 
     def _collect_current_step_data(self, metadata: Optional[Dict] = None) -> Dict:
@@ -556,13 +518,12 @@ class ABBDataCollector():
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="ABB真实触觉数据采集（支持多次重复采集）")
+    parser = argparse.ArgumentParser(description="ABB真实触觉数据采集")
     parser.add_argument("--object", required=True, default="circle_r3", help="需要采集的物体名称，与traj.json保持一致")
     parser.add_argument("--pose", nargs=7, type=float, metavar=('x', 'y', 'z', 'qw', 'qx', 'qy', 'qz'),
                         help="机器人初始位姿，未提供时使用脚本内默认")
     parser.add_argument("--config", type=str, default=None, help="自定义采集配置文件路径")
     parser.add_argument("--storage", type=str, default=None, help="统一汇总数据文件路径")
-    parser.add_argument("--repeat", type=int, default=5, help="每条轨迹重复采集次数（默认1次）")
     parser.add_argument("--dry-run", action="store_true", help="仅验证配置与轨迹，不执行采集")
     return parser.parse_args()
 
@@ -586,8 +547,7 @@ def main():
         pose0=pose0,
         object_name=args.object,
         config_file=args.config,
-        storage_file=args.storage,
-        repeat_count=args.repeat
+        storage_file=args.storage
     )
 
     if args.dry_run:
@@ -599,13 +559,11 @@ def main():
     try:
         calibration_data = collector.collect_calibration_data()
 
-        logger.info("=" * 60)
         logger.info("标定数据采集完成")
         for obj_name, obj_data in calibration_data.items():
-            logger.info(f"物体: {obj_name}, 总记录数: {len(obj_data)}")
-            for traj_key, steps in obj_data.items():
-                logger.info(f"  {traj_key}: {len(steps)} steps")
-        logger.info("=" * 60)
+            logger.info(f"物体: {obj_name}, 轨迹数: {len(obj_data)}")
+            for traj_name, steps in obj_data.items():
+                logger.info(f"  {traj_name}: {len(steps)} steps")
 
     except Exception as e:
         logger.error(f"数据采集过程中发生错误: {e}")
