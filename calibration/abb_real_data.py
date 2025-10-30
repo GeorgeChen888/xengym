@@ -42,6 +42,7 @@ import copy
 from pyabb import ABBRobot, Logger, Affine
 from pyati.ati_sensor import ATISensor
 from xensesdk import Sensor
+from xensesdk import ExampleView
 
 # 添加项目路径
 PROJ_DIR = Path(__file__).resolve().parent.parent
@@ -107,7 +108,7 @@ class ABBDataCollector():
         self.step_settle_time = float(self.config.get('step_settle_time', 0.3))
         self.safe_offset_mm = float(self.config.get('safe_offset_mm', 1.0))
         self.frame_interval = float(self.config.get('frame_interval', 0.1))
-        self.data_frames = int(self.config.get('data_frames', 10))
+        self.data_frames = int(self.config.get('data_frames', 30))
         self.trajectory_config = self._load_trajectory_config()
 
         # 数据汇总文件
@@ -150,11 +151,24 @@ class ABBDataCollector():
 
         # 初始化触觉传感器
         self.sensor = TactileSensor()
-        self.rot_sensor = (Affine(a=90, c=180) * Affine(c=-45)).rotation()
+        self.rot_sensor = (Affine(a=180)*Affine(a=-90,c=180).inverse()*Affine(a=-45)).rotation()
+        # self.View = ExampleView(self.sensor.sensor)
+        # self.View2d = self.View.create2d(Sensor.OutputType.Difference, Sensor.OutputType.Depth)
+        # def callback():
+        #     src, diff, depth = self.sensor.sensor.selectSensorInfo(
+        #         Sensor.OutputType.Rectify,
+        #         Sensor.OutputType.Difference,
+        #         Sensor.OutputType.Depth
+        #     )
+        #     marker_img = self.sensor.sensor.drawMarkerMove(src)
+        #     self.View2d.setData(Sensor.OutputType.Difference, diff)
+        #     self.View2d.setData(Sensor.OutputType.Depth, depth)
+        # self.View.setCallback(callback)
+        # self.View.show()
 
         # 接触检测参数
         self.z_cont = None  # 接触位置，将在运行时确定
-        self.cont_th = self.config.get('contact_threshold', -0.05)
+        self.cont_th = self.config.get('contact_threshold', -0.03)
 
         # 存储采集的数据 (calibration.py格式)
         self.calibration_data = {}
@@ -162,11 +176,11 @@ class ABBDataCollector():
     def _get_default_config(self):
         """获取默认配置"""
         return {
-            'contact_threshold': -0.02,
+            'contact_threshold': -0.025,
             'approach_speed': 1,  # mm/s
-            'press_speed': 8,      # mm/s
+            'press_speed': 1,      # mm/s
             'max_force': -1,      # N
-            'data_frames': 30,     # 每步采集数据帧数
+            'data_frames': 40,     # 每步采集数据帧数
             'frame_interval': 0.1,  # 帧间隔时间 s
             'step_settle_time': 0.3,  # 每步运动后的等待时间 s
             'safe_offset_mm': 8.0    # 安全抬起高度 mm
@@ -282,13 +296,16 @@ class ABBDataCollector():
     def move_to_contact(self):
         """移动到刚好接触的位置"""
         logger.info("开始寻找接触位置...")
+        self.robot.set_velocity(20,20)
+        cp = self.robot.get_cartesian()
         if self.z_cont is not None:
-            self.robot.set_velocity(20,20)
-            cp = self.robot.get_cartesian()
-            self.move_to_xyz(cp.x, cp.y, self.z_cont + 0.1)
+            self.move_to_xyz(556.58, -199.08, self.z_cont + 1)
         else:
-            self.move_to_xyz(556.97, -200.20, 115.05 + 0.1)
-
+            self.move_to_xyz(556.58, -199.08, 115)  # 默认位置
+        # pose_contact = (556.58, -199.08, 115)
+        # self.robot.moveCart([*pose_contact,0,1,0,0])
+        # self.move_to_xyz(556.58, -199.14, 114)
+        time.sleep(1)
         # 设置较慢的接近速度
         self.robot.set_velocity(self.config['approach_speed'], self.config['approach_speed'])
 
@@ -312,11 +329,17 @@ class ABBDataCollector():
                 break
 
             # 向下移动
-            self.move_delta_xyz(dz=-0.01)
+            # self.move_delta_xyz(dz=-0.01)
+            self.relative_move(z=0.02)
             time.sleep(0.2)
 
         if not is_contact:
             raise RuntimeError("未检测到接触")
+
+        self.relative_move(z=-0.1)
+        # self.move_to_xyz(556.58, -199.08, self.z_cont)
+        self.robot.moveCart([556.58, -199.08, self.z_cont+0.195, 0, 1, 0, 0])
+        time.sleep(0.5)
 
         # 恢复正常速度
         self.robot.set_velocity(self.config['press_speed'], self.config['press_speed'])
@@ -340,7 +363,7 @@ class ABBDataCollector():
                     object_data[traj_name] = traj_data
             except Exception as exc:
                 logger.error(f"轨迹 {traj_name} 执行失败: {exc}")
-
+        self.move_to_safe_height()
         self.calibration_data[self.object_name] = object_data
         logger.info(f"物体 {self.object_name} 采集完成，共 {len(object_data)} 条轨迹")
         return {self.object_name: object_data}
@@ -377,7 +400,7 @@ class ABBDataCollector():
                 step_key = f"step_{idx:03d}"
                 trajectory_data[step_key] = step_data
 
-        self.move_to_safe_height()
+        # self.move_to_safe_height()
         time.sleep(self.step_settle_time)
 
         logger.info(f"轨迹 {trajectory_name} 完成，采集 {len(trajectory_data)} 条数据")
@@ -418,13 +441,14 @@ class ABBDataCollector():
 
     def move_to_safe_height(self):
         """移动到安全高度（相对于接触位置）"""
+        self.robot.set_velocity(20, 20)
         if self.z_cont is not None:
             safe_z = self.z_cont + self.safe_offset_mm
         else:
-            safe_z = self.pose0[2] + self.safe_offset_mm
+            safe_z = self.pose0[2]
 
         current_pose = self.robot.get_cartesian()
-        self.move_to_xyz(current_pose.x, current_pose.y, safe_z)
+        self.move_to_xyz(556.58, -199.08, safe_z)
         time.sleep(0.5)
 
     def _load_storage(self) -> Dict:
@@ -515,7 +539,7 @@ def main():
         logger.error(f"物体 {args.object} 不在轨迹配置中。可用物体: {available_objects}")
         return
 
-    pose0_default = [574.33 - 32 + 28.5/2, -176.67 - 32 + 17.2 / 2, 94.89 + 20 + 20, 0, 1, 0, 0]
+    pose0_default = [556.58, -199.08, 114.10 + 20, 0, 1, 0, 0]
 
     pose0 = args.pose if args.pose else pose0_default
 

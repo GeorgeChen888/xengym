@@ -187,7 +187,7 @@ class RealDataInterface:
         if not stl_files:
             return None
         # print("Found STL files:", stl_files)
-        object_files = [str(f) for f in stl_files[1:2]]  
+        object_files = [str(f) for f in stl_files[1:]]  
         print("object_files:", object_files)
         return create_calibration_scene(object_files=object_files, visible=False, sensor_visible=False)
 
@@ -273,7 +273,11 @@ class BayesianCalibration:
                 if not isinstance(real_traj, dict) or not isinstance(sim_traj, dict):
                     continue
                 
-                for step_name in real_traj.keys() & sim_traj.keys():
+                # 收集该轨迹的所有步骤并排序
+                common_steps = sorted(real_traj.keys() & sim_traj.keys())
+                
+                # 处理 marker_displacement（逐步比较）
+                for step_name in common_steps:
                     real_step = real_traj.get(step_name, {}) or {}
                     sim_step = sim_traj.get(step_name, {}) or {}
                     
@@ -282,16 +286,40 @@ class BayesianCalibration:
                         if np.isfinite(err):
                             total_error += weight_marker * err
                             total_weight += weight_marker
-                    
-                    if 'force_xyz' in real_step and 'force_xyz' in sim_step:
-                        err = rmse(real_step['force_xyz'][2], sim_step['force_xyz'][2])
-                        # err = rmse(real_step['force_xyz'], sim_step['force_xyz'])
-                        if np.isfinite(err):
-                            total_error += weight_force * err
-                            total_weight += weight_force
+                
+                # 处理 force_xyz[2]（计算相邻步骤的差值）
+                if len(common_steps) >= 2:
+                    for i in range(len(common_steps) - 1):
+                        step_curr = common_steps[i]
+                        step_next = common_steps[i + 1]
+                        
+                        real_curr = real_traj.get(step_curr, {}) or {}
+                        real_next = real_traj.get(step_next, {}) or {}
+                        sim_curr = sim_traj.get(step_curr, {}) or {}
+                        sim_next = sim_traj.get(step_next, {}) or {}
+                        
+                        # 检查是否都有 force_xyz 数据
+                        if ('force_xyz' in real_curr and 'force_xyz' in real_next and
+                            'force_xyz' in sim_curr and 'force_xyz' in sim_next):
+                            
+                            # 计算真实数据的力差值
+                            real_force_curr = float(real_curr['force_xyz'][2])
+                            real_force_next = float(real_next['force_xyz'][2])
+                            real_force_diff = real_force_next - real_force_curr
+                            
+                            # 计算仿真数据的力差值
+                            sim_force_curr = float(sim_curr['force_xyz'][2])
+                            sim_force_next = float(sim_next['force_xyz'][2])
+                            sim_force_diff = sim_force_next - sim_force_curr
+                            
+                            # 比较差值的误差
+                            force_diff_error = abs(real_force_diff - sim_force_diff)
+                            
+                            if np.isfinite(force_diff_error):
+                                total_error += weight_force * force_diff_error
+                                total_weight += weight_force
         
         return total_error / total_weight if total_weight > 0 else float('inf')
-        # return np.log(10*total_error / total_weight) if total_weight > 0 else float('inf')
     
     
     def objective_function(self, params: np.ndarray, real_data: Dict, use_scaled_space: bool = False) -> float:
@@ -730,10 +758,10 @@ def main():
     parser.add_argument('--n-initial', type=int, default=5)
     parser.add_argument('--n-iterations', type=int, default=50)
     parser.add_argument('--E-min', type=float, default=0.5000)
-    parser.add_argument('--E-max', type=float, default=1.2000)
+    parser.add_argument('--E-max', type=float, default=1.0000)
     parser.add_argument('--nu-min', type=float, default=0.3000)
     parser.add_argument('--nu-max', type=float, default=0.4000)
-    parser.add_argument('--acquisition', type=str, default='adaptive',
+    parser.add_argument('--acquisition', type=str, default='ts',
                        choices=['ei', 'ucb', 'pi', 'ts', 'adaptive'])
     parser.add_argument('--xi', type=float, default=0.005)
     parser.add_argument('--no-visualization', action='store_true', help='禁用可视化')

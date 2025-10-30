@@ -787,7 +787,7 @@ if __name__ == '__main__':
             break
  
     from fem_processor import process_gel_data
-    fem_pro = process_gel_data('g1-ws', E=0.8519, nu=0.3374, use_cache=True)
+    fem_pro = process_gel_data('g1-ws', E=0.7817, nu=0.3642, use_cache=True)
     
     raw_data = fem_pro.get_data()
     scene = CalibrationScene(

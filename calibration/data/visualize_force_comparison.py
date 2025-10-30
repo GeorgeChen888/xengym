@@ -35,22 +35,23 @@ class ForceDataVisualizer:
         self.real_data = self.load_data(real_data_path)
         self.sim_data = self.load_data(sim_data_path)
         
-        # Get common objects and trajectories
-        self.objects = sorted(list(set(self.real_data.keys()) & set(self.sim_data.keys())))
+        # Get union of objects (show object if it exists in either dataset)
+        self.objects = sorted(list(set(self.real_data.keys()) | set(self.sim_data.keys())))
         
         if not self.objects:
-            raise ValueError("No common objects found between real and sim data")
+            raise ValueError("No objects found in either real or sim data")
         
         self.current_object = self.objects[0]
         self.current_trajectory = None
         self.trajectories = {}
         
-        # Build trajectory dictionary
+        # Build trajectory dictionary (union of trajectories for each object)
         for obj in self.objects:
-            real_trajs = set(self.real_data[obj].keys())
-            sim_trajs = set(self.sim_data[obj].keys())
-            common_trajs = sorted(list(real_trajs & sim_trajs))
-            self.trajectories[obj] = common_trajs
+            real_trajs = set(self.real_data.get(obj, {}).keys())
+            sim_trajs = set(self.sim_data.get(obj, {}).keys())
+            # Use union: show trajectory if it exists in either dataset
+            all_trajs = sorted(list(real_trajs | sim_trajs))
+            self.trajectories[obj] = all_trajs
         
         self.current_trajectory = self.trajectories[self.current_object][0] if self.trajectories[self.current_object] else None
         
@@ -65,11 +66,17 @@ class ForceDataVisualizer:
     def extract_force_z(self, data: Dict, obj: str, traj: str) -> Tuple[np.ndarray, np.ndarray]:
         """
         Extract force_xyz[2] values and step numbers for a given object and trajectory
+        Only include steps 0-5 (step_000 to step_005)
         
         Returns:
-        - steps: array of step indices
-        - forces: array of Z-force values
+        - steps: array of step indices (shifted by +1, with (0,0) prepended)
+        - forces: array of Z-force values (with 0 prepended)
+        - Returns empty arrays if object/trajectory doesn't exist in this dataset
         """
+        # Check if object and trajectory exist in this dataset
+        if obj not in data or traj not in data[obj]:
+            return np.array([]), np.array([])
+        
         traj_data = data[obj][traj]
         steps = []
         forces = []
@@ -80,10 +87,19 @@ class ForceDataVisualizer:
                 force_z = step_data['force_xyz'][2]
                 # Extract step number from key like "step_000", "step_001", etc.
                 step_num = int(step_key.split('_')[-1])
-                steps.append(step_num)
-                forces.append(float(force_z))
+                
+                # Only include steps 0-5
+                if step_num <= 5:
+                    steps.append(step_num)
+                    forces.append(float(force_z))
         
-        return np.array(steps), np.array(forces)
+        # Only prepend (0, 0) if we have data
+        if len(steps) > 0:
+            steps = np.array([0] + [s + 1 for s in steps])
+            forces = np.array([0.0] + forces)
+            return steps, forces
+        else:
+            return np.array([]), np.array([])
     
     def fit_curve(self, x: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -186,7 +202,7 @@ class ForceDataVisualizer:
             return
         
         try:
-            # Extract force data
+            # Extract force data (may return empty arrays if data doesn't exist)
             real_steps, real_forces = self.extract_force_z(
                 self.real_data, self.current_object, self.current_trajectory
             )
@@ -194,13 +210,14 @@ class ForceDataVisualizer:
                 self.sim_data, self.current_object, self.current_trajectory
             )
             
+            # Check if at least one dataset has data
             if len(real_steps) == 0 and len(sim_steps) == 0:
-                self.ax_main.text(0.5, 0.5, 'No force data available', 
+                self.ax_main.text(0.5, 0.5, 'No force data available',
                                 ha='center', va='center', transform=self.ax_main.transAxes,
                                 fontsize=14)
                 return
             
-            # Plot real data
+            # Plot real data (if available)
             if len(real_steps) > 0:
                 self.ax_main.scatter(real_steps, real_forces, 
                                    c='blue', s=80, alpha=0.6, 
@@ -214,7 +231,7 @@ class ForceDataVisualizer:
                                     linewidth=2.5, alpha=0.7,
                                     label='Real Fitted Curve')
             
-            # Plot sim data
+            # Plot sim data (if available)
             if len(sim_steps) > 0:
                 self.ax_main.scatter(sim_steps, sim_forces, 
                                    c='red', s=80, alpha=0.6, marker='s',
@@ -237,6 +254,14 @@ class ForceDataVisualizer:
             )
             self.ax_main.legend(loc='best', fontsize=10, framealpha=0.9)
             self.ax_main.grid(True, alpha=0.3, linestyle='--')
+            
+            # Set Y-axis to start from 0
+            y_min, y_max = self.ax_main.get_ylim()
+            self.ax_main.set_ylim(0, y_max)
+            
+            # Set X-axis to start from 0
+            x_min, x_max = self.ax_main.get_xlim()
+            self.ax_main.set_xlim(0, x_max)
         
         except Exception as e:
             self.ax_main.text(0.5, 0.5, f'Error loading data:\n{str(e)}', 
