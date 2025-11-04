@@ -95,7 +95,7 @@ class FemSolver:
         F = self.Kf_init @ displacement
         # 引入非线性参数
         # if self.nonlinear_coef != 0:
-        # F += self.nonlinear_coef * displacement**3
+        F += self.nonlinear_coef * displacement**2
 
         if not isinstance(displacement, np.ndarray):
             displacement = displacement.get()

@@ -42,32 +42,14 @@ class CalibrationVecTouchSim(SensorScene):
         self.gel_size_mm = (17.2, 28.5)
         self.marker_dx_dy_mm = (1.31, 1.31)
         
-        # 如果有raw_data，根据top_nodes推断marker_row_col
+        # Marker网格固定为20×11，不应该根据FEM节点数改变
+        self.marker_row_col = (20, 11)
+        
+        # 调试信息：如果有raw_data，输出top_nodes数量供参考
         if raw_data is not None:
             n_top_nodes = len(raw_data.get('top_nodes', []))
             if n_top_nodes > 0:
-                # 推断最合适的marker网格尺寸
-                best_shape = None
-                min_diff = float('inf')
-                for i in range(1, int(n_top_nodes**0.5) + 1):
-                    if n_top_nodes % i == 0:
-                        j = n_top_nodes // i
-                        aspect_ratio = max(i, j) / min(i, j)
-                        target_aspect = 20 / 11  # 约1.82
-                        diff = abs(aspect_ratio - target_aspect)
-                        if diff < min_diff:
-                            min_diff = diff
-                            best_shape = (i, j)
-                
-                if best_shape is not None:
-                    self.marker_row_col = best_shape
-                    print(f"📐 根据{n_top_nodes}个顶部节点，推断marker_row_col为: {self.marker_row_col}")
-                else:
-                    self.marker_row_col = (20, 11)
-            else:
-                self.marker_row_col = (20, 11)
-        else:
-            self.marker_row_col = (20, 11)
+                print(f"📐 FEM top_nodes数量: {n_top_nodes}, Marker网格固定为: {self.marker_row_col}")
         
         # 如果没有提供raw_data，需要确保有fem_file
         if raw_data is None and fem_file is None:
@@ -762,9 +744,17 @@ if __name__ == '__main__':
     # 准备物体文件
     asset_dir = Path("/home/czl/Downloads/workspace/xengym/calibration/obj")
     candidates = [
-        "circle_r3.STL", "circle_r4.STL", "circle_r5.STL","r3d5.STL","r4d5.STL","rhombus_d6.STL",
-        "rhombus_d8.STL","square_d6.STL","square_d8.STL","tri_d6.STL"
-        ]
+            "circle_r3.STL", 
+            "circle_r4.STL", 
+            "circle_r5.STL",
+            "r3d5.STL",
+            "r4d5.STL",
+            "rhombus_d6.STL",
+            "rhombus_d8.STL",
+            "square_d6.STL",
+            "square_d8.STL",
+            "tri_d6.STL"
+            ]
     
     object_files = [str(asset_dir / n) for n in candidates if (asset_dir / n).exists()]
     if not object_files:
@@ -787,7 +777,7 @@ if __name__ == '__main__':
             break
  
     from fem_processor import process_gel_data
-    fem_pro = process_gel_data('g1-ws', E=0.7817, nu=0.3642, use_cache=True)
+    fem_pro = process_gel_data('g1-ws', E=0.7966, nu=0.3523, use_cache=True)
     
     raw_data = fem_pro.get_data()
     scene = CalibrationScene(
@@ -796,6 +786,7 @@ if __name__ == '__main__':
         visible=True,
         sensor_visible=True,
     )
+    scene.update_fem_data(raw_data, coef=-0.015)
 
     # 默认选择第一个物体
     first_obj = list(scene.objects.keys())[0]

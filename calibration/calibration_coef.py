@@ -181,12 +181,24 @@ class RealDataInterface:
         obj_path = Path("/home/czl/Downloads/workspace/xengym/calibration/obj")
         if not obj_path.exists():
             return None
-        
-        stl_files = list(obj_path.glob("*.STL"))
-        if not stl_files:
-            return None
-        
-        object_files = [str(f) for f in stl_files[:5]]
+        candidates = [
+            "circle_r3.STL", 
+            "circle_r4.STL", 
+            # "circle_r5.STL",
+            "r3d5.STL",
+            "r4d5.STL",
+            "rhombus_d6.STL",
+            # "rhombus_d8.STL",
+            "square_d6.STL",
+            # "square_d8.STL",
+            "tri_d6.STL"
+            ]
+        stl_files = [str(obj_path / n) for n in candidates if (obj_path / n).exists()]
+        # stl_files = list(obj_path.glob("*.STL"))
+        # if not stl_files:
+        #     return None
+        # print("Found STL files:", stl_files)
+        object_files = [str(f) for f in stl_files[:]]  
         return create_calibration_scene(object_files=object_files, visible=False, sensor_visible=False)
 
 
@@ -454,13 +466,13 @@ def main():
     print("🎯 coef参数贝叶斯优化标定")
     
     parser = argparse.ArgumentParser(description='Coef Parameter Calibration using Bayesian Optimization')
-    parser.add_argument('--E-fixed', type=float, default=0.6203, help='固定的E值（来自先前E-nu标定）')
-    parser.add_argument('--nu-fixed', type=float, default=0.3673, help='固定的nu值（来自先前E-nu标定）')
+    parser.add_argument('--E-fixed', type=float, default=0.7966, help='固定的E值（来自先前E-nu标定）')
+    parser.add_argument('--nu-fixed', type=float, default=0.3523, help='固定的nu值（来自先前E-nu标定）')
     parser.add_argument('--n-initial', type=int, default=5, help='初始采样点数')
-    parser.add_argument('--n-iterations', type=int, default=30, help='优化迭代次数')
+    parser.add_argument('--n-iterations', type=int, default=50, help='优化迭代次数')
     parser.add_argument('--coef-min', type=float, default=-0.5, help='coef参数下界')
     parser.add_argument('--coef-max', type=float, default=0.5, help='coef参数上界')
-    parser.add_argument('--acquisition', type=str, default='adaptive',
+    parser.add_argument('--acquisition', type=str, default='ts',
                        choices=['ei', 'ucb', 'pi', 'ts', 'adaptive'], help='采集函数类型')
     parser.add_argument('--xi', type=float, default=0.01, help='探索参数')
     parser.add_argument('--no-visualization', action='store_true', help='禁用可视化')

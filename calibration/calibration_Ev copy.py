@@ -182,12 +182,24 @@ class RealDataInterface:
         obj_path = Path("/home/czl/Downloads/workspace/xengym/calibration/obj")
         if not obj_path.exists():
             return None
-        
-        stl_files = list(obj_path.glob("*.STL"))
-        if not stl_files:
-            return None
+        candidates = [
+            "circle_r3.STL", 
+            "circle_r4.STL", 
+            # "circle_r5.STL",
+            "r3d5.STL",
+            "r4d5.STL",
+            "rhombus_d6.STL",
+            # "rhombus_d8.STL",
+            "square_d6.STL",
+            # "square_d8.STL",
+            "tri_d6.STL"
+            ]
+        stl_files = [str(obj_path / n) for n in candidates if (obj_path / n).exists()]
+        # stl_files = list(obj_path.glob("*.STL"))
+        # if not stl_files:
+        #     return None
         # print("Found STL files:", stl_files)
-        object_files = [str(f) for f in stl_files[1:]]  
+        object_files = [str(f) for f in stl_files[:]]  
         print("object_files:", object_files)
         return create_calibration_scene(object_files=object_files, visible=False, sensor_visible=False)
 
@@ -290,8 +302,8 @@ class BayesianCalibration:
                             total_error += weight_force * err
                             total_weight += weight_force
         
-        return total_error / total_weight if total_weight > 0 else float('inf')
-        # return np.log(10*total_error / total_weight) if total_weight > 0 else float('inf')
+        # return total_error / total_weight if total_weight > 0 else float('inf')
+        return np.log(10*total_error / total_weight) if total_weight > 0 else float('inf')
     
     
     def objective_function(self, params: np.ndarray, real_data: Dict, use_scaled_space: bool = False) -> float:
@@ -733,7 +745,7 @@ def main():
     parser.add_argument('--E-max', type=float, default=1.0000)
     parser.add_argument('--nu-min', type=float, default=0.3000)
     parser.add_argument('--nu-max', type=float, default=0.4000)
-    parser.add_argument('--acquisition', type=str, default='adaptive',
+    parser.add_argument('--acquisition', type=str, default='ei',
                        choices=['ei', 'ucb', 'pi', 'ts', 'adaptive'])
     parser.add_argument('--xi', type=float, default=0.005)
     parser.add_argument('--no-visualization', action='store_true', help='禁用可视化')
