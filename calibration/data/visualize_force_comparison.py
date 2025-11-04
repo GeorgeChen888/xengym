@@ -17,6 +17,7 @@ import pickle
 from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button, RadioButtons
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from typing import Dict, List, Tuple, Optional
 import sys
 
@@ -165,7 +166,7 @@ class ForceAndMarkerVisualizer:
     
     def setup_plot(self):
         """Setup the matplotlib figure and widgets"""
-        self.fig = plt.figure(figsize=(16, 9))
+        self.fig = plt.figure(figsize=(16, 9), constrained_layout=False)
         self.fig.canvas.manager.set_window_title('Force & Marker Comparison: Real vs Simulation')
         
         # Main content area (will be redrawn based on mode)
@@ -290,13 +291,25 @@ class ForceAndMarkerVisualizer:
     
     def draw_marker_mode(self):
         """Draw marker comparison mode"""
-        # Three marker plots side by side
-        ax_real = plt.subplot2grid((4, 5), (0, 1), colspan=1, rowspan=3)
-        ax_sim = plt.subplot2grid((4, 5), (0, 2), colspan=1, rowspan=3)
-        ax_error = plt.subplot2grid((4, 5), (0, 3), colspan=1, rowspan=3)
+        # 手动创建三个完全相同大小的axes
+        # 定义统一的axes尺寸
+        ax_width = 0.18   # 每个图宽度（缩小为error图的colorbar留空间）
+        ax_height = 0.55  # 每个图高度
+        ax_bottom = 0.35  # 底部位置
+        spacing = 0.05    # 图之间的间距
+        
+        # Real图
+        ax_real = self.fig.add_axes([0.25, ax_bottom, ax_width, ax_height])
+        
+        # Sim图
+        ax_sim = self.fig.add_axes([0.25 + ax_width + spacing, ax_bottom, ax_width, ax_height])
+        
+        # Error图 - 完全相同的尺寸
+        ax_error = self.fig.add_axes([0.25 + 2*(ax_width + spacing), ax_bottom, ax_width, ax_height])
         
         # Info panel
-        ax_info = plt.subplot2grid((4, 5), (3, 1), colspan=3, rowspan=1)
+        ax_info = self.fig.add_axes([0.25, 0.05, 0.65, 0.2])
+        ax_info.axis('off')
         
         self.main_axes.extend([ax_real, ax_sim, ax_error, ax_info])
         
@@ -390,6 +403,19 @@ class ForceAndMarkerVisualizer:
     
     def update_marker_plot(self, ax_real, ax_sim, ax_error, ax_info):
         """Update marker displacement visualization"""
+        # 清除所有旧的 colorbar axes（避免叠加）
+        fig = ax_real.figure
+        # 获取当前所有axes，找出colorbar相关的并删除
+        for ax_obj in fig.axes[:]:
+            # colorbar的axes通常很窄，且不在main_axes列表中
+            if ax_obj not in self.main_axes and ax_obj not in [self.ax_object, self.ax_trajectory, self.ax_step, self.ax_mode_button]:
+                # 这可能是colorbar的axes
+                if hasattr(ax_obj, 'get_position'):
+                    bbox = ax_obj.get_position()
+                    # colorbar通常宽度很小（< 0.05）
+                    if bbox.width < 0.05:
+                        fig.delaxes(ax_obj)
+        
         ax_real.clear()
         ax_sim.clear()
         ax_error.clear()
@@ -549,26 +575,60 @@ class ForceAndMarkerVisualizer:
         ax.text(0.75, 0.15, 'Y', transform=ax.transAxes, fontsize=9, ha='center')
     
     def plot_marker_error(self, ax, original_grid, marker_real, marker_sim):
-        """Plot marker displacement error as heatmap"""
+        """Plot marker displacement error with arrows and heatmap"""
+        # 计算误差向量
         diff = marker_real - marker_sim
         diff_magnitude = np.sqrt(diff[:, :, 0]**2 + diff[:, :, 1]**2)
         
         orig_x = original_grid[:, :, 0].flatten()
         orig_y = original_grid[:, :, 1].flatten()
+        diff_x = diff[:, :, 0].flatten()
+        diff_y = diff[:, :, 1].flatten()
         diff_mag_flat = diff_magnitude.flatten()
         
-        # Create scatter plot with color mapping
-        scatter = ax.scatter(orig_x, orig_y, c=diff_mag_flat, s=60,
-                           cmap='hot', alpha=0.9, edgecolors='black', linewidth=0.5)
+        # 计算误差的最大值用于缩放
+        max_error = np.max(diff_mag_flat) if np.max(diff_mag_flat) > 0 else 1.0
         
-        # Add colorbar
-        cbar = plt.colorbar(scatter, ax=ax, fraction=0.046, pad=0.04)
+        # 箭头缩放因子：使最大误差的箭头长度约为3mm
+        arrow_scale = 3.0 / max_error if max_error > 0.5 else 5.0
+        
+        # 背景热力图：使用原始位置绘制误差大小
+        scatter = ax.scatter(orig_x, orig_y, c=diff_mag_flat, s=50,
+                           cmap='hot', alpha=0.6, edgecolors='none', zorder=1)
+        
+        # 创建独立的colorbar axes，完全不影响主axes
+        # 获取error axes的位置
+        pos = ax.get_position()
+        # 在右侧创建colorbar axes（调整位置确保在可见范围内）
+        cbar_ax = self.fig.add_axes([pos.x1 + 0.01, pos.y0, 0.02, pos.height])
+        cbar = plt.colorbar(scatter, cax=cbar_ax)
         cbar.set_label('Error (mm)', fontsize=9, fontweight='bold')
         cbar.ax.tick_params(labelsize=8)
         
+        # 绘制误差向量箭头
+        n_points = len(orig_x)
+        for i in range(n_points):
+            dx_scaled = diff_x[i] * arrow_scale
+            dy_scaled = diff_y[i] * arrow_scale
+            
+            # 只绘制明显的误差
+            if abs(diff_x[i]) > 0.005 or abs(diff_y[i]) > 0.005:
+                ax.arrow(orig_x[i], orig_y[i], dx_scaled, dy_scaled,
+                        head_width=0.4, head_length=0.3,
+                        fc='purple', ec='purple',
+                        alpha=0.8, linewidth=1.2, zorder=2,
+                        length_includes_head=True)
+        
         ax.set_xlabel('X (mm)', fontsize=10, fontweight='bold')
         ax.set_ylabel('Y (mm)', fontsize=10, fontweight='bold')
-        ax.set_title('Error Magnitude', fontsize=11, fontweight='bold')
+        ax.set_title(f'Error (×{arrow_scale:.1f})', fontsize=11, fontweight='bold')
+        
+        # 简化图例，避免与colorbar重叠
+        # 只显示箭头说明，热力图已由colorbar说明
+        legend_handle = plt.Line2D([0], [0], marker='>', color='purple',
+                                   markersize=8, alpha=0.8, linewidth=0)
+        ax.legend([legend_handle], [f'Error Vector (×{arrow_scale:.1f})'],
+                 fontsize=9, loc='upper left', framealpha=0.9)
         ax.grid(True, alpha=0.3, linestyle=':', linewidth=0.5)
         
         # 固定坐标轴范围（与plot_marker保持一致）
